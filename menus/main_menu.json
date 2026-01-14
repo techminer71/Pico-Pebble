@@ -1,0 +1,84 @@
+{
+  "menus": [
+    {
+      "title": "Main Menu",
+      "options": [
+        {
+          "name": "Settings",
+          "type": "menu",
+          "action": "Settings"
+        },
+        {
+          "name": "Quick Run A",
+          "type": "run",
+          "action": "run:payload_a.dd"
+        },
+        {
+          "name": "Open Tools",
+          "type": "menu",
+          "action": "Tools"
+        }
+      ]
+    },
+    {
+      "title": "Settings",
+      "options": [
+        {
+          "name": "Customization",
+          "type": "menu",
+          "action": "Customization"
+        }
+      ]
+    },
+    {
+      "title": "Customization",
+      "options": [
+        {
+          "name": "Toggle Invert",
+          "type": "custom",
+          "action": "toggle_invert"
+        },
+        {
+          "name": "Boot Message",
+          "type": "custom",
+          "action": "set_boot_message"
+        },
+        {
+          "name": "Debug Mode",
+          "type": "command",
+          "action": "toggle_debug"
+        },
+        {
+          "name": "Back to Top",
+          "type": "command",
+          "action": "reset_cursor"
+        },
+        {
+          "name": "Invert Once",
+          "type": "command",
+          "action": "invert_once"
+        },
+        {
+          "name": "Reload Menus",
+          "type": "command",
+          "action": "reload_menu"
+        },
+        {
+          "name": "Test 1",
+          "type": "command",
+          "action": "reload_menu"
+        },
+        {
+          "name": "Test 2",
+          "type": "command",
+          "action": "reload_menu"
+        },
+        {
+          "name": "Flash Message",
+          "type": "command",
+          "action": "flash_message"
+        }
+      ]
+    }
+  ]
+}

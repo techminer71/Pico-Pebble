@@ -1,0 +1,16 @@
+{
+  "sheet": "/bitmaps/otter_sprite_sheet.bmp",
+  "frame_w": 100,
+  "frame_h": 100,
+  "cols": 6,
+  "clips": {
+    "idle":     { "row": 0,    "count": 4,  "fps": 6,  "loop": true },
+    "idle-alt": { "start": 4,  "count": 12, "fps": 6,  "loop": true },
+    "jump":     { "start": 16, "count": 4,  "fps": 12,  "loop": true },
+    "land":     { "start": 20, "count": 3,  "fps": 6,  "loop": true },
+    "run":      { "start": 23, "count": 3,  "fps": 9,  "loop": true },
+    "sleep":    { "start": 26, "count": 6,  "fps": 6,  "loop": true },
+    "spin":     { "start": 32, "count": 3,  "fps": 6,  "loop": true }
+  }
+}
+

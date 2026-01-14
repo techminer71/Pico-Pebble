@@ -1,0 +1,33 @@
+Pi Pico Pinout for Flipper Pico Project
+=======================================
+
+| Function         | GPIO Pin | Notes                                 |
+|------------------|----------|---------------------------------------|
+| UART TX to Pi    | GP0      | Sends UART to Raspberry Pi            |
+| UART RX from Pi  | GP1      | Not used currently                    |
+| Button: Up       | GP2      | Debounced input                       |
+| Button: Down     | GP3      | Debounced input                       |
+| Button: Left     | GP4      | Debounced input                       |
+| Button: Right    | GP5      | Debounced input                       |
+| Button: Select   | GP6      | Debounced input                       |
+| Button: Back     | GP7      | Debounced input                       |
+| I2C SDA          | GP6      | Shared with Select (check conflict)   |
+| I2C SCL          | GP7      | Shared with Back (check conflict)     |
+| SPI MISO         | GP16     | Connect to Pro Micro MOSI (D16)       |
+| SPI CS (SS)      | GP17     | Connect to Pro Micro SS (D10)         |
+| SPI SCK          | GP18     | Connect to Pro Micro SCK (D15)        |
+| SPI MOSI         | GP19     | Connect to Pro Micro MISO (D14)       |
+| GND              | GND      | Shared with Raspberry Pi & Pro Micro  |
+| VBUS / 5V        | VBUS     | Use with logic level shifter if needed|
+
+Pro Micro Pinout (SPI Slave)
+============================
+
+| Function      | Pin  | Notes                                     |
+|---------------|------|-------------------------------------------|
+| SPI SS (CS)   | D10  | Connect to Pico GP17                      |
+| SPI MISO      | D14  | Connect to Pico GP19 (Pico → Pro Micro)   |
+| SPI MOSI      | D16  | Connect to Pico GP16 (Pro Micro → Pico)   |
+| SPI SCK       | D15  | Connect to Pico GP18                      |
+| GND           | GND  | Must be connected to Pico GND             |
+| VCC           | VCC  | Usually 5V — match levels or shift logic  |

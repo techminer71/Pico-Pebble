@@ -1,0 +1,19 @@
+{
+  "menus": [
+    {
+      "title": "IR Control",
+      "options": [
+        {
+          "name": "Learn TV Power",
+          "type": "action",
+          "action": "ir:learn:tv_power:rx=GP21"
+        },
+        {
+          "name": "Send TV Power",
+          "type": "action",
+          "action": "ir:send:tv_power:tx=GP22:repeat=2"
+        }
+      ]
+    }
+  ]
+}

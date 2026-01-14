@@ -1,0 +1,19 @@
+{
+  "menus": [
+    {
+      "title": "Run Menu",
+      "options": [
+        {
+          "name": "Run A",
+          "type": "menu",
+          "action": "run:payload_a.dd"
+        },
+        {
+          "name": "Run B",
+          "type": "run",
+          "action": "run:payload_b.dd"
+        }
+      ]
+    }
+  ]
+}

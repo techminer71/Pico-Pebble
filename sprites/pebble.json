@@ -1,0 +1,11 @@
+{
+  "sheet": "/bitmaps/pebbleSpriteSheet.bmp",
+  "frame_w": 20,
+  "frame_h": 20,
+  "cols": 8,
+  "clips": {
+    "sit":  { "row": 0, "count": 8, "fps": 6,  "loop": true },
+    "idle": { "row": 1, "count": 8, "fps": 8,  "loop": true },
+    "walk": { "row": 2, "count": 8, "fps": 10, "loop": true }
+  }
+}

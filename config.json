@@ -1,0 +1,8 @@
+{
+  "display_type": "oled",
+  "i2c_address": "0x27",
+  "invert_on_start": false,
+  "boot_message": "Welcome to Pico Pebble",
+  "debug_mode": false
+}
+
