@@ -4,8 +4,10 @@
 #include <string.h>
 #include <Keyboard.h>
 
-static const int ARM_PIN = 2;
-static bool hid_enabled = true;
+static const int ARM_PIN = 2;            // D2 -> GND to arm
+static const int LED_PIN = LED_BUILTIN;  // on-board LED
+
+static bool hid_allowed = true;          // disabled if ARM held at boot
 
 static constexpr uint8_t  EOT    = 0x04;
 static constexpr uint16_t BUF_SZ = 256;
@@ -42,45 +44,93 @@ static void toUpperCopy(const char* in, char* out, size_t outsz) {
   out[i] = 0;
 }
 
-// ---------- event emitter (debug only) ----------
-static void evt_keydown(const char* k)  { Serial.print("[EVT] KEYDOWN  "); Serial.println(k); }
-static void evt_keyup(const char* k)    { Serial.print("[EVT] KEYUP    "); Serial.println(k); }
-static void evt_keypress(const char* k) { Serial.print("[EVT] KEYPRESS "); Serial.println(k); }
-static void evt_type(const char* s)     { Serial.print("[EVT] TYPE     \""); Serial.print(s); Serial.println("\""); }
-static void evt_delay(long ms)          { Serial.print("[EVT] DELAY    "); Serial.print(ms); Serial.println(" ms"); }
-
 static void apply_default_delay() {
-  if (defaultDelayMs > 0) evt_delay(defaultDelayMs);
+  if (defaultDelayMs > 0) delay((unsigned long)defaultDelayMs);
 }
 
-static bool is_modifier(const char* tok, const char** norm) {
-  if (!strcmp(tok, "CTRL") || !strcmp(tok, "CONTROL")) { *norm = "CTRL"; return true; }
-  if (!strcmp(tok, "SHIFT"))                           { *norm = "SHIFT"; return true; }
-  if (!strcmp(tok, "ALT") || !strcmp(tok, "OPTION"))   { *norm = "ALT"; return true; }
+// ---------- KEY NAME -> HID mapping ----------
+static uint8_t keycode_for_name(const char* tok) {
+  // common specials
+  if (!strcmp(tok, "ENTER"))     return KEY_RETURN;
+  if (!strcmp(tok, "TAB"))       return KEY_TAB;
+  if (!strcmp(tok, "ESC"))       return KEY_ESC;
+  if (!strcmp(tok, "ESCAPE"))    return KEY_ESC;
+  if (!strcmp(tok, "BACKSPACE")) return KEY_BACKSPACE;
+  if (!strcmp(tok, "DELETE"))    return KEY_DELETE;
+  if (!strcmp(tok, "SPACE"))     return ' ';
+
+  // arrows
+  if (!strcmp(tok, "UP"))    return KEY_UP_ARROW;
+  if (!strcmp(tok, "DOWN"))  return KEY_DOWN_ARROW;
+  if (!strcmp(tok, "LEFT"))  return KEY_LEFT_ARROW;
+  if (!strcmp(tok, "RIGHT")) return KEY_RIGHT_ARROW;
+
+  // nav
+  if (!strcmp(tok, "HOME"))     return KEY_HOME;
+  if (!strcmp(tok, "END"))      return KEY_END;
+  if (!strcmp(tok, "PAGEUP"))   return KEY_PAGE_UP;
+  if (!strcmp(tok, "PAGEDOWN")) return KEY_PAGE_DOWN;
+
+  // function keys
+  if (tok[0] == 'F' && isdigit((unsigned char)tok[1])) {
+    int n = atoi(tok + 1);
+    if (n >= 1 && n <= 12) return (uint8_t)(KEY_F1 + (n - 1));
+  }
+
+  // single-char key names like "Y"
+  if (tok[0] && !tok[1]) {
+    char c = tok[0];
+    if (isalpha((unsigned char)c)) return (uint8_t)tolower((unsigned char)c);
+    if (isdigit((unsigned char)c)) return (uint8_t)c;
+  }
+
+  // fallthrough: try first char if printable
+  if (tok[0] && tok[1] == 0 && tok[0] >= 32 && tok[0] <= 126) return (uint8_t)tok[0];
+
+  return 0; // unknown
+}
+
+static bool is_modifier(const char* tok, uint8_t& modKey) {
+  if (!strcmp(tok, "CTRL") || !strcmp(tok, "CONTROL")) { modKey = KEY_LEFT_CTRL; return true; }
+  if (!strcmp(tok, "SHIFT"))                            { modKey = KEY_LEFT_SHIFT; return true; }
+  if (!strcmp(tok, "ALT") || !strcmp(tok, "OPTION"))    { modKey = KEY_LEFT_ALT; return true; }
   if (!strcmp(tok, "GUI") || !strcmp(tok, "WINDOWS") || !strcmp(tok, "WIN") || !strcmp(tok, "COMMAND")) {
-    *norm = "GUI"; return true;
+    modKey = KEY_LEFT_GUI; return true;
   }
   return false;
 }
 
-static void normalize_key(const char* tok, char* out, size_t outsz) {
-  // minimal: pass-through with a few normalizations
-  if (!strcmp(tok, "RETURN")) tok = "ENTER";
-  if (!strcmp(tok, "ESCAPE")) tok = "ESC";
-  if (!strcmp(tok, "DEL"))    tok = "DELETE";
-  strncpy(out, tok, outsz - 1);
-  out[outsz - 1] = 0;
+// ---------- safety / arming ----------
+static bool armed_for_this_payload() {
+  if (!hid_allowed) return false;
+
+  // If already held, execute immediately
+  if (digitalRead(ARM_PIN) == LOW) return true;
+
+  Serial.println("[HID] Hold ARM (D2->GND) within 5s to EXECUTE...");
+  unsigned long start = millis();
+  while (millis() - start < 5000) {
+    if (digitalRead(ARM_PIN) == LOW) return true;
+  }
+  return false;
 }
 
-static void emit_combo(char* lineUpper) {
-  // lineUpper is mutable, uppercase, trimmed
-  const char* mods[6];
+// ---------- HID executor ----------
+static void hid_press_and_release(uint8_t k) {
+  if (!k) return;
+  Keyboard.press(k);
+  delay(5);
+  Keyboard.release(k);
+}
+
+static void hid_exec_combo(char* lineUpper) {
+  // Parse tokens from uppercase line: MOD MOD KEY [KEY...]
+  uint8_t mods[6];
   uint8_t modCount = 0;
 
-  char keys[4][16];
+  uint8_t keys[6];
   uint8_t keyCount = 0;
 
-  // Split by spaces manually
   char* p = lineUpper;
   while (*p) {
     while (*p == ' ') p++;
@@ -89,41 +139,46 @@ static void emit_combo(char* lineUpper) {
     char* tok = p;
     while (*p && *p != ' ') p++;
     if (*p) { *p = 0; p++; }
-
     if (!*tok) continue;
 
-    const char* m = nullptr;
-    if (is_modifier(tok, &m)) {
-      if (modCount < 6) mods[modCount++] = m;
+    uint8_t mk = 0;
+    if (is_modifier(tok, mk)) {
+      if (modCount < 6) mods[modCount++] = mk;
       continue;
     }
 
-    if (keyCount < 4) {
-      normalize_key(tok, keys[keyCount], sizeof(keys[keyCount]));
-      keyCount++;
-    }
+    // normalize a couple names
+    if (!strcmp(tok, "RETURN")) tok = (char*)"ENTER";
+    if (!strcmp(tok, "DEL"))    tok = (char*)"DELETE";
+
+    uint8_t kc = keycode_for_name(tok);
+    if (kc && keyCount < 6) keys[keyCount++] = kc;
   }
 
   if (keyCount == 0 && modCount > 0) {
-    Serial.println("[EVT][WARN] modifiers with no key");
+    Serial.println("[HID][WARN] Modifiers with no key");
     apply_default_delay();
     return;
   }
 
   // Hold modifiers
-  for (uint8_t i = 0; i < modCount; i++) evt_keydown(mods[i]);
+  for (uint8_t i = 0; i < modCount; i++) Keyboard.press(mods[i]);
 
-  // Press keys
-  for (uint8_t i = 0; i < keyCount; i++) evt_keypress(keys[i]);
+  // Press keys (or write chars)
+  for (uint8_t i = 0; i < keyCount; i++) {
+    uint8_t k = keys[i];
+    // For printable ascii, press/release works fine
+    Keyboard.press(k);
+  }
+  delay(10);
 
-  // Release modifiers
-  for (int i = (int)modCount - 1; i >= 0; i--) evt_keyup(mods[i]);
+  // Release everything
+  Keyboard.releaseAll();
 
   apply_default_delay();
 }
 
-static void simulate_line(const char* raw) {
-  // trim in-place caller provides mutable line; here we only read it
+static void hid_exec_line(const char* raw) {
   char lineBuf[140];
   strncpy(lineBuf, raw, sizeof(lineBuf) - 1);
   lineBuf[sizeof(lineBuf) - 1] = 0;
@@ -131,29 +186,24 @@ static void simulate_line(const char* raw) {
   char* line = trim(lineBuf);
   if (!*line) return;
 
-  // Comment
-  if (!strncmp(line, "REM ", 4)) {
-    Serial.print("[REM] ");
-    Serial.println(line + 4);
-    return;
-  }
+  // Comments
+  if (!strncmp(line, "REM ", 4)) return;
 
   // Save for REPEAT
   strncpy(lastCmd, line, sizeof(lastCmd) - 1);
   lastCmd[sizeof(lastCmd) - 1] = 0;
 
-  // Uppercase copy for command detection
   toUpperCopy(line, upperLine, sizeof(upperLine));
 
   if (!strncmp(upperLine, "STRING ", 7)) {
-    evt_type(line + 7);  // keep original casing for typed text
+    Keyboard.print(line + 7);  // original casing
     apply_default_delay();
     return;
   }
 
   if (!strncmp(upperLine, "DELAY ", 6)) {
     long ms = atol(upperLine + 6);
-    evt_delay(ms);
+    delay((unsigned long)ms);
     apply_default_delay();
     return;
   }
@@ -161,21 +211,49 @@ static void simulate_line(const char* raw) {
   if (!strncmp(upperLine, "DEFAULT_DELAY ", 14) || !strncmp(upperLine, "DEFAULTDELAY ", 13)) {
     const char* sp = strchr(upperLine, ' ');
     defaultDelayMs = sp ? atol(sp + 1) : 0;
-    Serial.print("[EVT] SET DEFAULT_DELAY "); Serial.print(defaultDelayMs); Serial.println(" ms");
     return;
   }
 
   if (!strncmp(upperLine, "REPEAT ", 7)) {
     int n = atoi(upperLine + 7);
-    Serial.print("[EVT] REPEAT "); Serial.println(n);
     if (n <= 0 || !lastCmd[0]) return;
-    for (int i = 0; i < n; i++) simulate_line(lastCmd);
+    for (int i = 0; i < n; i++) hid_exec_line(lastCmd);
     return;
   }
 
-  // Otherwise treat as key / combo line
-  // Make upperLine mutable for splitting:
-  emit_combo(upperLine);
+  // Otherwise treat as combo / key
+  hid_exec_combo(upperLine);
+}
+
+static void hid_execute_payload(const uint8_t* payload, uint16_t len) {
+  digitalWrite(LED_PIN, HIGH);
+  Keyboard.begin();
+
+  defaultDelayMs = 0;
+  lastCmd[0] = 0;
+
+  // Copy into a temp mutable buffer for splitting
+  static char buf[BUF_SZ + 1];
+  if (len > BUF_SZ) len = BUF_SZ;
+  memcpy(buf, payload, len);
+  buf[len] = 0;
+
+  // Normalize CR->LF
+  for (uint16_t i = 0; i < len; i++) if (buf[i] == '\r') buf[i] = '\n';
+
+  char* s = buf;
+  char* end = buf + len;
+
+  while (s < end) {
+    char* line = s;
+    while (s < end && *s != '\n' && *s != 0) s++;
+    if (s < end) { *s = 0; s++; }
+    char* t = trim(line);
+    if (*t) hid_exec_line(t);
+  }
+
+  Keyboard.end();
+  digitalWrite(LED_PIN, LOW);
 }
 
 // ---------- SPI ISR ----------
@@ -199,64 +277,25 @@ void setup() {
   Serial.begin(115200);
   while (!Serial) delay(10);
 
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+
   pinMode(SS, INPUT_PULLUP);
   pinMode(MISO, OUTPUT);
   pinMode(ARM_PIN, INPUT_PULLUP);
 
   if (digitalRead(ARM_PIN) == LOW) {
-    hid_enabled = false;
-    Serial.println("[HID] Disabled (ARM held at boot).");
+    hid_allowed = false;
+    Serial.println("[HID] Disabled (ARM held at boot). Simulation-only.");
   } else {
-    Serial.println("[HID] Enabled (debug-typing mode)");
+    Serial.println("[HID] Ready (will require ARM hold per payload).");
   }
 
   SPCR = _BV(SPE) | _BV(SPIE);
   sei();
 
-  Serial.println("SPI Ducky DEBUG (Low-RAM Event Emitter) ready.");
+  Serial.println("SPI Ducky HID ready.");
 }
-
-static void hid_type_payload_as_text(const uint8_t* data, uint16_t len) {
-  if (!hid_enabled) {
-    Serial.println("[HID] Not typing: HID disabled.");
-    return;
-  }
-
-  // Require a deliberate press to type
-  Serial.println("[HID] Press and HOLD ARM (D2->GND) to type payload as text...");
-  unsigned long start = millis();
-  while (millis() - start < 5000) {           // 5s window to arm
-    if (digitalRead(ARM_PIN) == LOW) break;
-  }
-  if (digitalRead(ARM_PIN) != LOW) {
-    Serial.println("[HID] Not armed. Skipping typing.");
-    return;
-  }
-
-  Serial.println("[HID] Armed. Typing in 3 seconds...");
-  delay(3000);
-
-  Keyboard.begin();
-
-  for (uint16_t i = 0; i < len; i++) {
-    uint8_t b = data[i];
-
-    // keep it tame: printable + newline + tab
-    if (b == '\n') {
-      Keyboard.write(KEY_RETURN);
-    } else if (b == '\t') {
-      Keyboard.write('\t');
-    } else if (b >= 32 && b <= 126) {
-      Keyboard.write(b);
-    } else {
-      // skip other control bytes
-    }
-  }
-
-  Keyboard.end();
-  Serial.println("[HID] Done typing.");
-}
-
 
 void loop() {
   if (!msgReady) return;
@@ -286,55 +325,44 @@ void loop() {
 
   // META verify (first line)
   char* firstNL = (char*)memchr(localBuf, '\n', len);
-  if (firstNL) {
-    *firstNL = 0;
-    long expLen = -1, expSum = -1;
-
-    if (sscanf((char*)localBuf, "REM META LEN=%ld SUM16=%ld", &expLen, &expSum) == 2) {
-      uint8_t* payloadStart = (uint8_t*)(firstNL + 1);
-      uint16_t payloadLen   = (uint16_t)(len - (payloadStart - localBuf));
-      uint16_t payloadSum   = sum16(payloadStart, payloadLen);
-
-      bool pass = ((long)payloadLen == expLen && (long)payloadSum == expSum);
-
-      Serial.print("[META] expected len="); Serial.print(expLen);
-      Serial.print(" sum16="); Serial.print(expSum);
-      Serial.print(" | actual len="); Serial.print(payloadLen);
-      Serial.print(" sum16="); Serial.print(payloadSum);
-      Serial.println(pass ? "  ✅ PASS" : "  ❌ FAIL");
-
-      // Restore the newline before we do anything slow
-      *firstNL = '\n';
-
-      // Only type if META passes (and only payload body)
-      if (pass) {
-        hid_type_payload_as_text(payloadStart, payloadLen);
-      }
-    } else {
-      *firstNL = '\n';
-    }
+  if (!firstNL) {
+    Serial.println("[META] missing newline");
+    return;
   }
 
+  *firstNL = 0;
+  long expLen = -1, expSum = -1;
 
-
-
-  Serial.println("---- EVENTS ----");
-  defaultDelayMs = 0;
-  lastCmd[0] = 0;
-
-  // Manual line split
-  char* s = (char*)localBuf;
-  char* end = s + len;
-
-  while (s < end) {
-    char* line = s;
-    while (s < end && *s != '\n' && *s != 0) s++;
-    if (s < end) { *s = 0; s++; } // terminate line
-    char* t = trim(line);
-    if (*t) simulate_line(t);
+  if (sscanf((char*)localBuf, "REM META LEN=%ld SUM16=%ld", &expLen, &expSum) != 2) {
+    *firstNL = '\n';
+    Serial.println("[META] header missing or invalid");
+    return;
   }
 
-  Serial.println("---- END ----");
-  Serial.println("[DBG] done parsing");
+  uint8_t* payloadStart = (uint8_t*)(firstNL + 1);
+  uint16_t payloadLen   = (uint16_t)(len - (payloadStart - localBuf));
+  uint16_t payloadSum   = sum16(payloadStart, payloadLen);
+
+  bool pass = ((long)payloadLen == expLen && (long)payloadSum == expSum);
+
+  Serial.print("[META] expected len="); Serial.print(expLen);
+  Serial.print(" sum16="); Serial.print(expSum);
+  Serial.print(" | actual len="); Serial.print(payloadLen);
+  Serial.print(" sum16="); Serial.print(payloadSum);
+  Serial.println(pass ? "  ✅ PASS" : "  ❌ FAIL");
+
+  *firstNL = '\n';
+
+  if (!pass) return;
+
+  // Execute only if armed
+  if (armed_for_this_payload()) {
+    Serial.println("[HID] ARMED. Executing payload...");
+    delay(500); // tiny settle before typing
+    hid_execute_payload(payloadStart, payloadLen);
+    Serial.println("[HID] Done.");
+  } else {
+    Serial.println("[HID] Not armed. Skipping execution.");
+  }
 }
 
