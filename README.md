@@ -1,1 +1,1 @@
-# flipper-pico
+# Pico Pebble
